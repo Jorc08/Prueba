@@ -5,6 +5,8 @@ conteo físico, actualización de estatus, búsqueda y registro de evidencias fo
 """
 
 import os
+import shutil
+import tempfile
 from typing import List, Dict, Any, Optional
 import pandas as pd
 
@@ -220,17 +222,38 @@ class InventoryManager:
     def load_from_excel_or_csv(self, file_path: str) -> int:
         """
         Carga inventario desde un archivo .xlsx, .xls o .csv.
+        Maneja bloqueos de archivo (PermissionError) cuando el archivo está abierto en Excel o OneDrive.
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Archivo no encontrado: {file_path}")
 
         ext = os.path.splitext(file_path)[1].lower()
-        if ext in ['.xlsx', '.xls']:
-            df = pd.read_excel(file_path)
-        elif ext == '.csv':
-            df = pd.read_csv(file_path)
-        else:
-            raise ValueError("Formato de archivo no soportado. Use .xlsx, .xls o .csv")
+
+        def _read_file(target_path: str) -> pd.DataFrame:
+            if ext in ['.xlsx', '.xls']:
+                return pd.read_excel(target_path)
+            elif ext == '.csv':
+                return pd.read_csv(target_path)
+            else:
+                raise ValueError("Formato de archivo no soportado. Use .xlsx, .xls o .csv")
+
+        try:
+            df = _read_file(file_path)
+        except PermissionError:
+            # Intento de copia temporal en caso de archivo bloqueado por Excel o OneDrive
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, f"temp_inv_{os.path.basename(file_path)}")
+            try:
+                shutil.copy2(file_path, temp_file_path)
+                df = _read_file(temp_file_path)
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+            except Exception:
+                filename = os.path.basename(file_path)
+                raise PermissionError(
+                    f"El archivo '{filename}' está abierto en Microsoft Excel o se está sincronizando en OneDrive.\n\n"
+                    "Por favor, cierre Microsoft Excel y vuelva a intentarlo."
+                )
 
         return self.load_from_dataframe(df)
 
